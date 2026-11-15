@@ -48,21 +48,18 @@ def fetch_chip(stock_id, start_date):
             df = pd.DataFrame(r.json().get("data"))
             df_r = df[df["date"].isin(sorted(df["date"].unique())[-3:])]
             inst = int((df_r["buy"].sum() - df_r["sell"].sum()) / 1000)
-    except Exception:
-        pass
+    except Exception: pass
     try:
         r = requests.get(url, params={"dataset": "TaiwanStockMarginPurchaseShortSale", "data_id": stock_id, "start_date": start_date}, headers=h, timeout=6)
         if r.status_code == 200 and r.json().get("data") and len(r.json().get("data")) >= 2:
             df = pd.DataFrame(r.json().get("data")).sort_values("date").reset_index(drop=True)
             m_diff = int(df.iloc[-1]["MarginPurchaseTodayBalance"] - df.iloc[-2]["MarginPurchaseTodayBalance"])
-    except Exception:
-        pass
+    except Exception: pass
     try:
         r = requests.get(url, params={"dataset": "TaiwanStockDayTrading", "data_id": stock_id, "start_date": start_date}, headers=h, timeout=6)
         if r.status_code == 200 and r.json().get("data"):
             dt_sh = float(pd.DataFrame(r.json().get("data")).iloc[-1]["Volume"])
-    except Exception:
-        pass
+    except Exception: pass
     try:
         r = requests.get(url, params={"dataset": "TaiwanStockInfo", "data_id": stock_id}, headers=h, timeout=6)
         if r.status_code == 200 and r.json().get("data"):
@@ -70,11 +67,10 @@ def fetch_chip(stock_id, start_date):
             row0 = next(iter(d)) if isinstance(d, list) else d
             if isinstance(row0, dict) and "capital_stock" in row0:
                 cap = float(row0["capital_stock"])
-    except Exception:
-        pass
+    except Exception: pass
     return inst, m_diff, dt_sh, cap
 
-def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots=1500, min_amount_yi=1.0, min_chg=3.5, max_chg=10.5, use_ma_tangle=False, max_tangle_pct=5.0, require_chip_bonus=True):
+def run_screening(cfg):
     stats = {"total": 0, "stage1": 0, "source": "官方全市場 OpenAPI"}
     raw = fetch_all_tw_stocks_today()
     cands = list()
@@ -85,12 +81,11 @@ def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots
             try:
                 to_f = lambda v: float(str(v).replace(",", "").replace("+", "").strip()) if str(v).replace(",", "").replace("+", "").strip() not in bad else np.nan
                 op, hi, lo, cl, df_p, vs, amt = to_f(it.get("open")), to_f(it.get("high")), to_f(it.get("low")), to_f(it.get("close")), to_f(it.get("change")), to_f(it.get("volume")), to_f(it.get("amount"))
-                if np.isnan((op, hi, lo, cl, df_p, vs, amt)).any(): continue
-                vl, ay = vs / 1000.0, amt / 100000000.0
-                if vl < min_vol_lots or ay < min_amount_yi or cl - df_p <= 0: continue
-                chg = (df_p / (cl - df_p)) * 100.0
-                if not (min_chg <= chg <= max_chg) or cl < op or (cl == op and cl < hi): continue
-                if ((hi - cl) / cl) * 100.0 >= 1.5 or (cl > op and (hi - cl) >= ((cl - op) / 3.0)): continue
+                if np.isnan((op, hi, lo, cl, df_p, vs, amt)).any() or cl - df_p <= 0: continue
+                vl, ay, chg = vs / 1000.0, amt / 100000000.0, (df_p / (cl - df_p)) * 100.0
+                if cfg["use_liq"] and (vl < cfg["min_lots"] or ay < cfg["min_yi"]): continue
+                if cfg["use_chg"] and (not (cfg["min_chg"] <= chg <= cfg["max_chg"]) or cl < op or (cl == op and cl < hi)): continue
+                if cfg["use_shadow"] and (((hi - cl) / cl) * 100.0 >= 1.5 or (cl > op and (hi - cl) >= ((cl - op) / 3.0))): continue
                 cands.append({"code": it.get("code"), "ticker": it.get("ticker"), "name": it.get("name"), "close": cl, "chg": chg, "vl": int(vl), "vs": vs, "ay": round(ay, 2)})
             except Exception: continue
     else:
@@ -99,13 +94,12 @@ def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots
             c = tk.split(".").pop(0)
             cands.append({"code": c, "ticker": tk, "name": c, "close": 0.0, "chg": 0.0, "vl": 0, "vs": 0.0, "ay": 0.0, "bk": True})
 
-    if not cands:
-        return pd.DataFrame(), stats
+    if not cands: return pd.DataFrame(), stats
+    if len(cands) > 150: cands = sorted(cands, key=lambda x: x["ay"], reverse=True)[:150]
     tks = [c.get("ticker") for c in cands]
     hist = yf.download(tks, period="5mo", group_by="ticker", progress=False, threads=True)
     sdt = (datetime.now() - timedelta(days=20)).strftime("%Y-%m-%d")
-    res = list()
-    kline_pass_count = 0
+    res, k_pass = list(), 0
     for cd in cands:
         tk, code = cd.get("ticker"), cd.get("code")
         try:
@@ -115,30 +109,33 @@ def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots
             for m in (5, 10, 20, 60): df[f"MA{m}"] = df["Close"].rolling(m).mean()
             df["V5"], df["V20"] = df["Volume"].rolling(5).mean(), df["Volume"].rolling(20).mean()
             td, yt = df.iloc[-1], df.iloc[-2]
-            op, hi, lo, cl, vs, pc = float(td["Open"]), float(td["High"]), float(td["Close"]), float(td["Volume"]), float(yt["Close"])
+            op, hi, cl, vs, pc = float(td["Open"]), float(td["High"]), float(td["Close"]), float(td["Volume"]), float(yt["Close"])
             if cd.get("bk"):
                 if pc <= 0: continue
                 chg, vl, ay = ((cl - pc) / pc) * 100.0, vs / 1000.0, (cl * vs) / 100000000.0
-                if vl < min_vol_lots or ay < min_amount_yi or not (min_chg <= chg <= max_chg) or cl < op or (cl == op and cl < hi): continue
-                if ((hi - cl) / cl) * 100.0 >= 1.5 or (cl > op and (hi - cl) >= ((cl - op) / 3.0)): continue
+                if cfg["use_liq"] and (vl < cfg["min_lots"] or ay < cfg["min_yi"]): continue
+                if cfg["use_chg"] and (not (cfg["min_chg"] <= chg <= cfg["max_chg"]) or cl < op or (cl == op and cl < hi)): continue
+                if cfg["use_shadow"] and (((hi - cl) / cl) * 100.0 >= 1.5 or (cl > op and (hi - cl) >= ((cl - op) / 3.0))): continue
                 cd["close"], cd["chg"], cd["vl"], cd["vs"], cd["ay"] = cl, chg, int(vl), vs, round(ay, 2)
-            kline_pass_count += 1
-            if not (cl > td["MA5"] and cl > td["MA10"] and cl > td["MA20"] and cl > td["MA60"]): continue
-            if not (td["MA20"] > yt["MA20"] and td["MA60"] >= yt["MA60"]): continue
-            if use_ma_tangle:
+            k_pass += 1
+            if cfg["use_above_ma"] and not (cl > td["MA5"] and cl > td["MA10"] and cl > td["MA20"] and cl > td["MA60"]): continue
+            if cfg["use_ma_up"] and not (td["MA20"] > yt["MA20"] and td["MA60"] >= yt["MA60"]): continue
+            if cfg["use_tangle"]:
                 mas = (td["MA5"], td["MA10"], td["MA20"])
-                if ((max(mas) - min(mas)) / min(mas)) * 100.0 > max_tangle_pct: continue
-            if not (cl > df["Close"].iloc[-(breakout_days+1):-1].max()): continue
+                if ((max(mas) - min(mas)) / min(mas)) * 100.0 > cfg["max_tangle"]: continue
+            if cfg["use_brk"] and not (cl > df["Close"].iloc[-(cfg["brk_days"]+1):-1].max()): continue
             pv5, pv20 = float(yt["V5"]), float(yt["V20"])
-            if pv5 <= 0 or pv20 <= 0 or not (vol_mult < vs / pv5 < max_vol_mult and vs / pv20 > 1.5): continue
+            if pv5 <= 0 or pv20 <= 0: continue
+            v5_r, v20_r = vs / pv5, vs / pv20
+            if cfg["use_vol"] and not (cfg["min_v5"] < v5_r < cfg["max_v5"] and v20_r > 1.5): continue
             inst, md, dt_sh, cap = fetch_chip(code, sdt)
             dt_r = (dt_sh / cd.get("vs")) * 100.0 if (cd.get("vs") > 0 and dt_sh > 0) else 0.0
             to_p = (cd.get("vs") / (cap / 10.0)) * 100.0 if cap > 0 else 0.0
-            if dt_r >= 45.0 or to_p >= 10.0: continue
-            if require_chip_bonus and (inst <= 0 or md >= cd.get("vl") * 0.15): continue
-            res.append({"代號": code, "名稱": cd.get("name"), "收盤價": round(cd.get("close"), 2), "漲跌幅(%)": round(cd.get("chg"), 2), "成交張數": cd.get("vl"), "金額(億)": cd.get("ay"), "5日量比": round(vs / pv5, 2), "當沖比(%)": round(dt_r, 1), "週轉率(%)": round(to_p, 2), "3日法人(張)": inst, "融資增減(張)": md, "歷史資料": df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})})
-            time.sleep(0.1)
+            if cfg["use_liq"] and (dt_r >= 45.0 or to_p >= 10.0): continue
+            if cfg["use_chip"] and (inst <= 0 or md >= cd.get("vl") * 0.15): continue
+            res.append({"代號": code, "名稱": cd.get("name"), "收盤價": round(cd.get("close"), 2), "漲跌幅(%)": round(cd.get("chg"), 2), "成交張數": cd.get("vl"), "金額(億)": cd.get("ay"), "5日量比": round(v5_r, 2), "當沖比(%)": round(dt_r, 1), "週轉率(%)": round(to_p, 2), "3日法人(張)": inst, "融資增減(張)": md, "歷史資料": df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})})
+            time.sleep(0.08)
         except Exception: continue
-    stats["stage1"] = kline_pass_count
+    stats["stage1"] = k_pass
     out = pd.DataFrame(res)
-    return (out.sort_values(by="3日法人(張)", ascending=False).reset_index(drop=True) if not out.empty else out), stats
+    return (out.sort_values(by="5日量比", ascending=False).reset_index(drop=True) if not out.empty else out), stats
