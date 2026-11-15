@@ -245,7 +245,6 @@ def run_screening(
                     continue
                     
             margin_ok = margin_diff_lots < (cand["vol_lots"] * 0.15)
-請謹慎使用程式碼。
 if require_chip_bonus:
 if inst_3d_net <= 0 or not margin_ok:
 continue
