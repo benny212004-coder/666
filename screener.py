@@ -10,7 +10,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def fetch_all_tw_stocks_today():
     all_stocks = list()
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = dict(User_Agent="Mozilla/5.0")
     
     try:
         r_twse = requests.get("https://twse.com.tw", headers=headers, timeout=15, verify=False)
@@ -18,18 +18,18 @@ def fetch_all_tw_stocks_today():
             for item in r_twse.json():
                 code = str(item.get("Code", "")).strip()
                 if len(code) == 4 and code.isdigit():
-                    all_stocks.append({
-                        "code": code,
-                        "ticker": f"{code}.TW",
-                        "name": str(item.get("Name", "")).strip(),
-                        "open": item.get("OpeningPrice", ""),
-                        "high": item.get("HighestPrice", ""),
-                        "low": item.get("LowestPrice", ""),
-                        "close": item.get("ClosingPrice", ""),
-                        "change": item.get("Change", ""),
-                        "volume": item.get("TradeVolume", ""),
-                        "amount": item.get("TradeValue", "")
-                    })
+                    all_stocks.append(dict(
+                        code=code,
+                        ticker=f"{code}.TW",
+                        name=str(item.get("Name", "")).strip(),
+                        open=item.get("OpeningPrice", ""),
+                        high=item.get("HighestPrice", ""),
+                        low=item.get("LowestPrice", ""),
+                        close=item.get("ClosingPrice", ""),
+                        change=item.get("Change", ""),
+                        volume=item.get("TradeVolume", ""),
+                        amount=item.get("TradeValue", "")
+                    ))
     except Exception:
         pass
 
@@ -39,18 +39,18 @@ def fetch_all_tw_stocks_today():
             for item in r_tpex.json():
                 code = str(item.get("SecuritiesCompanyCode", "")).strip()
                 if len(code) == 4 and code.isdigit():
-                    all_stocks.append({
-                        "code": code,
-                        "ticker": f"{code}.TWO",
-                        "name": str(item.get("CompanyName", "")).strip(),
-                        "open": item.get("Open", ""),
-                        "high": item.get("High", ""),
-                        "low": item.get("Low", ""),
-                        "close": item.get("Close", ""),
-                        "change": item.get("Change", ""),
-                        "volume": item.get("TradingShares", ""),
-                        "amount": item.get("TransactionAmount", "")
-                    })
+                    all_stocks.append(dict(
+                        code=code,
+                        ticker=f"{code}.TWO",
+                        name=str(item.get("CompanyName", "")).strip(),
+                        open=item.get("Open", ""),
+                        high=item.get("High", ""),
+                        low=item.get("Low", ""),
+                        close=item.get("Close", ""),
+                        change=item.get("Change", ""),
+                        volume=item.get("TradingShares", ""),
+                        amount=item.get("TransactionAmount", "")
+                    ))
     except Exception:
         pass
         
@@ -58,7 +58,7 @@ def fetch_all_tw_stocks_today():
 
 def fetch_single_chip_data(stock_id, start_date):
     base_url = "https://finmindtrade.com"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = dict(User_Agent="Mozilla/5.0")
     
     inst_3d_net = 0
     margin_diff_lots = 0
@@ -66,7 +66,8 @@ def fetch_single_chip_data(stock_id, start_date):
     cap_stock = 0.0
     
     try:
-        r_i = requests.get(base_url, params={"dataset": "TaiwanStockInstitutionalInvestorsBuySell", "data_id": stock_id, "start_date": start_date}, headers=headers, timeout=8)
+        p_i = dict(dataset="TaiwanStockInstitutionalInvestorsBuySell", data_id=stock_id, start_date=start_date)
+        r_i = requests.get(base_url, params=p_i, headers=headers, timeout=8)
         if r_i.status_code == 200 and r_i.text.strip():
             d_i = r_i.json().get("data")
             if d_i:
@@ -78,7 +79,8 @@ def fetch_single_chip_data(stock_id, start_date):
         pass
 
     try:
-        r_m = requests.get(base_url, params={"dataset": "TaiwanStockMarginPurchaseShortSale", "data_id": stock_id, "start_date": start_date}, headers=headers, timeout=8)
+        p_m = dict(dataset="TaiwanStockMarginPurchaseShortSale", data_id=stock_id, start_date=start_date)
+        r_m = requests.get(base_url, params=p_m, headers=headers, timeout=8)
         if r_m.status_code == 200 and r_m.text.strip():
             d_m = r_m.json().get("data")
             if d_m and len(d_m) >= 2:
@@ -88,7 +90,8 @@ def fetch_single_chip_data(stock_id, start_date):
         pass
 
     try:
-        r_dt = requests.get(base_url, params={"dataset": "TaiwanStockDayTrading", "data_id": stock_id, "start_date": start_date}, headers=headers, timeout=8)
+        p_dt = dict(dataset="TaiwanStockDayTrading", data_id=stock_id, start_date=start_date)
+        r_dt = requests.get(base_url, params=p_dt, headers=headers, timeout=8)
         if r_dt.status_code == 200 and r_dt.text.strip():
             d_dt = r_dt.json().get("data")
             if d_dt:
@@ -97,7 +100,8 @@ def fetch_single_chip_data(stock_id, start_date):
         pass
 
     try:
-        r_info = requests.get(base_url, params={"dataset": "TaiwanStockInfo", "data_id": stock_id}, headers=headers, timeout=8)
+        p_info = dict(dataset="TaiwanStockInfo", data_id=stock_id)
+        r_info = requests.get(base_url, params=p_info, headers=headers, timeout=8)
         if r_info.status_code == 200 and r_info.text.strip():
             d_info = r_info.json().get("data")
             if d_info:
@@ -163,16 +167,16 @@ def run_screening(
             if dist_to_high_pct >= 1.5 or upper_shadow >= (body_len / 3.0):
                 continue
                 
-            candidates.append({
-                "code": item["code"],
-                "ticker": item["ticker"],
-                "name": item["name"],
-                "close": close_p,
-                "change_pct": change_pct,
-                "vol_lots": int(vol_lots),
-                "vol_shares": vol_shares,
-                "amount_yi": round(amount_yi, 2)
-            })
+            candidates.append(dict(
+                code=item["code"],
+                ticker=item["ticker"],
+                name=item["name"],
+                close=close_p,
+                change_pct=change_pct,
+                vol_lots=int(vol_lots),
+                vol_shares=vol_shares,
+                amount_yi=round(amount_yi, 2)
+            ))
         except Exception:
             continue
 
@@ -245,10 +249,11 @@ def run_screening(
                     continue
                     
             margin_ok = margin_diff_lots < (cand["vol_lots"] * 0.15)
+
 if require_chip_bonus:
 if inst_3d_net <= 0 or not margin_ok:
 continue
-df_chart = df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})
+df_chart = df.rename(columns=dict(Open="open", High="max", Low="min", Close="close"))
 final_results.append({
 "代號": code,
 "名稱": cand["name"],
