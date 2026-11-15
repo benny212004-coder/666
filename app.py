@@ -4,35 +4,56 @@ from screener import run_screening
 
 st.set_page_config(page_title="台股波段動能選股雷達", page_icon="🎯", layout="centered")
 st.title("🎯 台股波段動能選股雷達")
-st.caption("可調式漲停濾網｜均線翻揚 × 溫和帶量 × 籌碼健康度")
+st.caption("全模組化獨立開關｜自由組合您的專屬選股濾網")
 
 with st.sidebar:
-    st.header("⚙️ 專屬濾網參數微調")
-    min_chg = st.slider("當日最低漲幅 (%)", 0.5, 8.0, 3.5, 0.5)
-    max_chg = st.slider("當日最高漲幅 (% 含漲停)", 5.0, 10.5, 10.5, 0.5)
-    breakout_days = st.selectbox("突破關鍵頸線天數", options=(10, 20, 60), index=1)
-    use_ma_tangle = st.checkbox("啟用均線糾結發散 (選配)", value=False)
-    max_tangle_pct = st.slider("5/10/20日線最大乖離 (%)", 2.0, 8.0, 5.0, 0.5)
-    vol_mult = st.slider("5日均量最低倍數", 1.0, 3.0, 1.5, 0.1)
-    max_vol_mult = st.slider("5日均量上限 (防爆天量)", 2.5, 8.0, 4.0, 0.5)
-    min_vol_lots = st.number_input("最低成交張數", 100, 10000, 1500, 500)
-    min_amount_yi = st.number_input("最低成交金額 (億元)", 0.1, 10.0, 1.0, 0.5)
-    require_chip_bonus = st.checkbox("嚴格要求：近3日法人買超 且 融資未暴增", value=True)
+    st.header("🎛️ 9 大濾網獨立開關")
+    
+    st.subheader("一、均線與趨勢結構")
+    use_above_ma = st.checkbox("1. 站上所有均線 (5/10/20/60MA)", value=True)
+    use_ma_up = st.checkbox("2. 中長期均線翻揚 (20/60MA向上)", value=True)
+    use_tangle = st.checkbox("3. 均線糾結發散 (選配)", value=False)
+    max_tangle = st.slider("　└ 5/10/20日線最大乖離 (%)", 2.0, 8.0, 5.0, 0.5) if use_tangle else 5.0
 
-st.info(f"📌 **當前濾網**：站上5/10/20/60MA、月季線翻揚、漲幅 **{min_chg}%~{max_chg}%**、上影線 < 實體1/3、當沖比 < 45%、週轉率 < 10%。")
+    st.subheader("二、價格型態與防隔日沖")
+    use_brk = st.checkbox("4. 突破關鍵頸線 (創區間高)", value=True)
+    brk_days = st.selectbox("　└ 突破天數門檻", options=(10, 20, 60), index=1) if use_brk else 20
+    use_chg = st.checkbox("5. 漲幅區間與紅K限制", value=True)
+    min_chg = st.slider("　└ 最低漲幅 (%)", 0.5, 8.0, 3.5, 0.5) if use_chg else 0.0
+    max_chg = st.slider("　└ 最高漲幅 (% 含漲停)", 5.0, 10.5, 10.5, 0.5) if use_chg else 10.5
+    use_shadow = st.checkbox("6. 拒收長上影線 (<實體1/3)", value=True)
+
+    st.subheader("三、成交量與籌碼健康度")
+    use_vol = st.checkbox("7. 溫和帶量攻擊 (防爆天量)", value=True)
+    min_v5 = st.slider("　└ 5日均量最低倍數", 1.0, 3.0, 1.5, 0.1) if use_vol else 1.0
+    max_v5 = st.slider("　└ 5日均量上限倍數", 2.5, 8.0, 4.0, 0.5) if use_vol else 8.0
+    use_liq = st.checkbox("8. 流動性與當沖/週轉限制", value=True)
+    min_lots = st.number_input("　└ 最低成交張數", 100, 10000, 1500, 500) if use_liq else 100
+    min_yi = st.number_input("　└ 最低成交金額 (億元)", 0.1, 10.0, 1.0, 0.5) if use_liq else 0.1
+    use_chip = st.checkbox("9. 法人買超 且 融資未暴增", value=True)
+
+cfg = {
+    "use_above_ma": use_above_ma, "use_ma_up": use_ma_up, "use_tangle": use_tangle, "max_tangle": max_tangle,
+    "use_brk": use_brk, "brk_days": brk_days, "use_chg": use_chg, "min_chg": min_chg, "max_chg": max_chg,
+    "use_shadow": use_shadow, "use_vol": use_vol, "min_v5": min_v5, "max_v5": max_v5,
+    "use_liq": use_liq, "min_lots": min_lots, "min_yi": min_yi, "use_chip": use_chip
+}
+
+active_cnt = sum([use_above_ma, use_ma_up, use_tangle, use_brk, use_chg, use_shadow, use_vol, use_liq, use_chip])
+st.info(f"🎛️ 目前已開啟 **{active_cnt} / 9** 項濾網條件（點擊左上角 `>` 可自由勾選或關閉任一條件）。")
 
 if st.button("🚀 掃描台股全市場", use_container_width=True, type="primary"):
-    with st.spinner("正在掃描台股上市櫃全市場，並交叉比對均線與法人融資數據..."):
-        df_res, stats = run_screening(vol_mult, max_vol_mult, breakout_days, min_vol_lots, min_amount_yi, min_chg, max_chg, use_ma_tangle, max_tangle_pct, require_chip_bonus)
+    with st.spinner("正在依您勾選的條件掃描台股..."):
+        df_res, stats = run_screening(cfg)
         st.session_state['scan_result'], st.session_state['scan_stats'] = df_res, stats
 
 if 'scan_result' in st.session_state:
     df_res, stats = st.session_state['scan_result'], st.session_state.get('scan_stats', {})
     st.caption(f"📡 資料來源：{stats.get('source', '')} ｜ 總掃描：{stats.get('total', 0)} 檔 ｜ 初篩通過：{stats.get('stage1', 0)} 檔")
     if df_res.empty:
-        st.warning("目前無同時滿足所有條件的標的！可點擊左上角 `>` 選單，試著取消「嚴格要求法人買超」或調降「最低漲幅」測試。")
+        st.warning("目前無符合已勾選條件的標的！您可點擊左上角 `>` 取消部分勾選再按一次掃描。")
     else:
-        st.success(f"精選出 **{len(df_res)}** 檔符合條件的強勢突破股！")
+        st.success(f"精選出 **{len(df_res)}** 檔符合條件的強勢股！")
         cols = ("代號", "名稱", "收盤價", "漲跌幅(%)", "成交張數", "5日量比", "當沖比(%)", "週轉率(%)", "3日法人(張)", "融資增減(張)")
         st.dataframe(df_res[list(cols)], use_container_width=True, hide_index=True)
         st.subheader("📊 個股技術線圖檢視")
