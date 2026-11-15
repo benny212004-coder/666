@@ -74,7 +74,7 @@ def fetch_single_chip_data(stock_id, start_date):
         pass
     return inst_net, margin_diff, dt_shares, cap_stock
 
-def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots=1500, min_amount_yi=1.0, use_ma_tangle=False, max_tangle_pct=5.0, require_chip_bonus=True):
+def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots=1500, min_amount_yi=1.0, min_chg=3.5, max_chg=10.5, use_ma_tangle=False, max_tangle_pct=5.0, require_chip_bonus=True):
     raw_market = fetch_all_tw_stocks_today()
     if not raw_market:
         return pd.DataFrame()
@@ -95,9 +95,17 @@ def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots
             if prev_c <= 0:
                 continue
             chg = (df_p / prev_c) * 100.0
-            if not (3.5 <= chg <= 8.5) or cl <= op:
+            if not (min_chg <= chg <= max_chg):
                 continue
-            if ((hi - cl) / cl) * 100.0 >= 1.5 or (hi - cl) >= ((cl - op) / 3.0):
+            # 允許一字鎖漲停 (開盤即收盤且收在最高價) 或 實體紅K
+            if cl < op:
+                continue
+            if cl == op and cl < hi:
+                continue
+            # 拒收長上影線 (若為一字鎖漲停則實體長度為0，自動放行)
+            if ((hi - cl) / cl) * 100.0 >= 1.5:
+                continue
+            if cl > op and (hi - cl) >= ((cl - op) / 3.0):
                 continue
             candidates.append({"code": it.get("code"), "ticker": it.get("ticker"), "name": it.get("name"), "close": cl, "chg": chg, "v_lots": int(v_lots), "vs": vs, "amt_yi": round(amt_yi, 2)})
         except Exception:
