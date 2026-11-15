@@ -105,7 +105,7 @@ def fetch_single_chip_data(stock_id, start_date):
         if r_info.status_code == 200 and r_info.text.strip():
             d_info = r_info.json().get("data")
             if d_info:
-                first_row = d_info[0] if isinstance(d_info, list) else d_info
+                first_row = next(iter(d_info)) if isinstance(d_info, list) else d_info
                 if isinstance(first_row, dict) and "capital_stock" in first_row:
                     cap_stock = float(first_row["capital_stock"])
     except Exception:
@@ -183,8 +183,8 @@ def run_screening(
     if not candidates:
         return pd.DataFrame()
 
-    cand_tickers = [c["ticker"] for c in candidates]
-    raw_hist = yf.download(cand_tickers, period="5mo", group_by="ticker", progress=False, threads=True)
+    cand_tickers = tuple(c["ticker"] for c in candidates)
+    raw_hist = yf.download(list(cand_tickers), period="5mo", group_by="ticker", progress=False, threads=True)
     
     start_date = (datetime.now() - timedelta(days=20)).strftime("%Y-%m-%d")
     final_results = list()
@@ -247,7 +247,6 @@ def run_screening(
                 turnover_pct = (cand["vol_shares"] / total_shares) * 100.0
                 if turnover_pct >= 10.0:
                     continue
-                    
                     margin_ok = margin_diff_lots < (cand["vol_lots"] * 0.15)
 if require_chip_bonus:
 if inst_3d_net <= 0 or not margin_ok:
