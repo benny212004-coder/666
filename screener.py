@@ -4,51 +4,66 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import time
+import urllib3
 
-# 涵蓋台股上市櫃主流、權值、AI、重電、航運、生技、金融、傳產與高周轉熱門股
-TW_UNIVERSE = {
-    "2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科", "2382.TW": "廣達",
-    "2308.TW": "台達電", "2881.TW": "富邦金", "2882.TW": "國泰金", "2891.TW": "中信金",
-    "2303.TW": "聯電", "3711.TW": "日月光投控", "3231.TW": "緯創", "2357.TW": "華碩",
-    "3017.TW": "奇鋐", "3324.TWO": "雙鴻", "2376.TW": "技嘉", "6669.TW": "緯穎",
-    "2603.TW": "長榮", "2609.TW": "陽明", "2615.TW": "萬海", "2618.TW": "長榮航",
-    "2610.TW": "華航", "2379.TW": "瑞昱", "3034.TW": "聯詠", "3008.TW": "大立光",
-    "2327.TW": "國巨", "2345.TW": "智邦", "3661.TW": "世芯-KY", "3443.TW": "創意",
-    "3533.TW": "嘉澤", "1513.TW": "中興電", "1519.TW": "華城", "1503.TW": "士電",
-    "1504.TW": "東元", "2002.TW": "中鋼", "1605.TW": "華新", "2353.TW": "宏碁",
-    "2324.TW": "仁寶", "4938.TW": "和碩", "2301.TW": "光寶科", "2356.TW": "英業達",
-    "2409.TW": "友達", "3481.TW": "群創", "2344.TW": "華邦電", "2408.TW": "南亞科",
-    "8299.TWO": "群聯", "3260.TWO": "威剛", "6239.TW": "力成", "2449.TW": "京元電子",
-    "3037.TW": "欣興", "3189.TW": "景碩", "8046.TW": "南電", "2313.TW": "華通",
-    "2368.TW": "金像電", "6274.TWO": "台燿", "2383.TW": "台光電", "3044.TW": "健鼎",
-    "5483.TWO": "中美晶", "6488.TWO": "環球晶", "3105.TWO": "穩懋", "8069.TWO": "元太",
-    "5347.TWO": "世界", "3293.TWO": "鈊象", "6510.TWO": "精測", "5274.TWO": "信驊",
-    "2474.TW": "可成", "2354.TW": "鴻準", "3005.TW": "神基", "3706.TW": "神達",
-    "2377.TW": "微星", "2421.TW": "建準", "3653.TW": "健策", "6285.TW": "啟碁",
-    "5388.TW": "中磊", "3596.TW": "智易", "4968.TW": "立積", "2458.TW": "義隆",
-    "3035.TW": "智原", "6531.TW": "愛普*", "2337.TW": "旺宏", "3006.TW": "晶豪科",
-    "4919.TW": "新唐", "6770.TW": "力積電", "5340.TWO": "建榮", "1815.TWO": "富喬",
-    "8358.TWO": "金居", "6182.TWO": "合晶", "3532.TW": "台勝科", "3707.TWO": "漢磊",
-    "3016.TWO": "嘉晶", "2360.TW": "致茂", "6196.TW": "帆宣", "3413.TW": "京鼎",
-    "3583.TW": "辛耘", "3131.TWO": "弘塑", "6640.TWO": "均華", "5443.TWO": "均豪",
-    "2464.TW": "盟立", "2049.TW": "上銀", "1590.TW": "亞德客-KY", "4576.TW": "大銀微系統",
-    "2201.TW": "裕隆", "2204.TW": "中華", "1319.TW": "東陽", "1522.TW": "堤維西",
-    "2634.TW": "漢翔", "8033.TW": "雷虎", "2630.TW": "亞航", "5284.TW": "jpp-KY",
-    "6446.TW": "藥華藥", "6472.TW": "保瑞", "1795.TW": "美時", "4743.TWO": "合一",
-    "9958.TW": "世紀鋼", "3708.TW": "上緯投控", "6806.TW": "森崴能源", "1609.TW": "大亞",
-    "1608.TW": "華榮", "2501.TW": "國建", "2542.TW": "興富發", "5522.TW": "遠雄"
-}
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+def fetch_all_tw_stocks_today():
+    all_stocks = list()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        r_twse = requests.get("https://twse.com.tw", headers=headers, timeout=15, verify=False)
+        if r_twse.status_code == 200:
+            for item in r_twse.json():
+                code = str(item.get("Code", "")).strip()
+                if len(code) == 4 and code.isdigit():
+                    all_stocks.append({
+                        "code": code,
+                        "ticker": f"{code}.TW",
+                        "name": str(item.get("Name", "")).strip(),
+                        "open": item.get("OpeningPrice", ""),
+                        "high": item.get("HighestPrice", ""),
+                        "low": item.get("LowestPrice", ""),
+                        "close": item.get("ClosingPrice", ""),
+                        "change": item.get("Change", ""),
+                        "volume": item.get("TradeVolume", ""),
+                        "amount": item.get("TradeValue", "")
+                    })
+    except Exception:
+        pass
+
+    try:
+        r_tpex = requests.get("https://tpex.org.tw", headers=headers, timeout=15, verify=False)
+        if r_tpex.status_code == 200:
+            for item in r_tpex.json():
+                code = str(item.get("SecuritiesCompanyCode", "")).strip()
+                if len(code) == 4 and code.isdigit():
+                    all_stocks.append({
+                        "code": code,
+                        "ticker": f"{code}.TWO",
+                        "name": str(item.get("CompanyName", "")).strip(),
+                        "open": item.get("Open", ""),
+                        "high": item.get("High", ""),
+                        "low": item.get("Low", ""),
+                        "close": item.get("Close", ""),
+                        "change": item.get("Change", ""),
+                        "volume": item.get("TradingShares", ""),
+                        "amount": item.get("TransactionAmount", "")
+                    })
+    except Exception:
+        pass
+        
+    return all_stocks
 
 def fetch_single_chip_data(stock_id, start_date):
-    """針對通過技術面篩選的強勢股，單獨查詢三大法人、融資、當沖與股本"""
     base_url = "https://finmindtrade.com"
     headers = {"User-Agent": "Mozilla/5.0"}
     
     inst_3d_net = 0
     margin_diff_lots = 0
-    margin_ok = True
-    dt_ratio = 0.0
-    turnover_pct = 0.0
+    dt_shares = 0.0
+    cap_stock = 0.0
     
     try:
         r_i = requests.get(base_url, params={"dataset": "TaiwanStockInstitutionalInvestorsBuySell", "data_id": stock_id, "start_date": start_date}, headers=headers, timeout=8)
@@ -78,11 +93,21 @@ def fetch_single_chip_data(stock_id, start_date):
             d_dt = r_dt.json().get("data")
             if d_dt:
                 dt_shares = float(pd.DataFrame(d_dt).iloc[-1]["Volume"])
-                return inst_3d_net, margin_diff_lots, dt_shares
+    except Exception:
+        pass
+
+    try:
+        r_info = requests.get(base_url, params={"dataset": "TaiwanStockInfo", "data_id": stock_id}, headers=headers, timeout=8)
+        if r_info.status_code == 200 and r_info.text.strip():
+            d_info = r_info.json().get("data")
+            if d_info:
+                first_row = d_info[0] if isinstance(d_info, list) else d_info
+                if isinstance(first_row, dict) and "capital_stock" in first_row:
+                    cap_stock = float(first_row["capital_stock"])
     except Exception:
         pass
         
-    return inst_3d_net, margin_diff_lots, 0.0
+    return inst_3d_net, margin_diff_lots, dt_shares, cap_stock
 
 def run_screening(
     vol_mult=1.5,
@@ -94,18 +119,77 @@ def run_screening(
     max_tangle_pct=5.0,
     require_chip_bonus=True
 ):
-    tickers = list(TW_UNIVERSE.keys())
-    raw_data = yf.download(tickers, period="5mo", group_by="ticker", progress=False, threads=True)
-    
-    if raw_data.empty:
+    raw_market = fetch_all_tw_stocks_today()
+    if not raw_market:
         return pd.DataFrame()
         
-    start_date = (datetime.now() - timedelta(days=20)).strftime("%Y-%m-%d")
-    final_results = []
+    candidates = list()
+    invalid_vals = {"", "--", "---", "X", "None", "nan"}
     
-    for ticker in tickers:
+    for item in raw_market:
         try:
-            df = raw_data[ticker].dropna()
+            def to_f(v):
+                s = str(v).replace(",", "").replace("+", "").strip()
+                return float(s) if s not in invalid_vals else np.nan
+                
+            open_p = to_f(item["open"])
+            high_p = to_f(item["high"])
+            low_p = to_f(item["low"])
+            close_p = to_f(item["close"])
+            diff_p = to_f(item["change"])
+            vol_shares = to_f(item["volume"])
+            amount = to_f(item["amount"])
+            
+            if np.isnan((open_p, high_p, low_p, close_p, diff_p, vol_shares, amount)).any():
+                continue
+                
+            vol_lots = vol_shares / 1000.0
+            amount_yi = amount / 100000000.0
+            if vol_lots < min_vol_lots or amount_yi < min_amount_yi:
+                continue
+                
+            prev_close = close_p - diff_p
+            if prev_close <= 0:
+                continue
+            change_pct = (diff_p / prev_close) * 100.0
+            if not (3.5 <= change_pct <= 8.5):
+                continue
+            if close_p <= open_p:
+                continue
+                
+            dist_to_high_pct = ((high_p - close_p) / close_p) * 100.0
+            upper_shadow = high_p - close_p
+            body_len = close_p - open_p
+            if dist_to_high_pct >= 1.5 or upper_shadow >= (body_len / 3.0):
+                continue
+                
+            candidates.append({
+                "code": item["code"],
+                "ticker": item["ticker"],
+                "name": item["name"],
+                "close": close_p,
+                "change_pct": change_pct,
+                "vol_lots": int(vol_lots),
+                "vol_shares": vol_shares,
+                "amount_yi": round(amount_yi, 2)
+            })
+        except Exception:
+            continue
+
+    if not candidates:
+        return pd.DataFrame()
+
+    cand_tickers = [c["ticker"] for c in candidates]
+    raw_hist = yf.download(cand_tickers, period="5mo", group_by="ticker", progress=False, threads=True)
+    
+    start_date = (datetime.now() - timedelta(days=20)).strftime("%Y-%m-%d")
+    final_results = list()
+    
+    for cand in candidates:
+        ticker = cand["ticker"]
+        code = cand["code"]
+        try:
+            df = raw_hist[ticker].dropna() if len(cand_tickers) > 1 else raw_hist.dropna()
             if len(df) < 62:
                 continue
                 
@@ -119,57 +203,25 @@ def run_screening(
             
             today = df.iloc[-1]
             yest = df.iloc[-2]
-            
-            open_p = float(today["Open"])
-            high_p = float(today["High"])
-            low_p = float(today["Low"])
             close_p = float(today["Close"])
-            prev_close = float(yest["Close"])
             vol_shares = float(today["Volume"])
             
-            # 流動性門檻：成交張數 > 1500 張 且 成交金額 > 1 億元
-            vol_lots = vol_shares / 1000.0
-            amount_yi = (close_p * vol_shares) / 100000000.0
-            if vol_lots < min_vol_lots or amount_yi < min_amount_yi:
-                continue
-                
-            # 漲跌幅與紅K確認：3.5% ~ 8.5% (嚴格排除 >= 9.5% 漲停)
-            if prev_close <= 0:
-                continue
-            change_pct = ((close_p - prev_close) / prev_close) * 100.0
-            if not (3.5 <= change_pct <= 8.5):
-                continue
-            if close_p <= open_p:
-                continue
-                
-            # 拒收長上影線：收盤距最高 < 1.5% 且 上影線 < 實體紅K的 1/3
-            dist_to_high_pct = ((high_p - close_p) / close_p) * 100.0
-            upper_shadow = high_p - close_p
-            body_len = close_p - open_p
-            if dist_to_high_pct >= 1.5 or upper_shadow >= (body_len / 3.0):
-                continue
-                
-            # 站上所有均線 (收盤 > 5, 10, 20, 60MA)
             if not (close_p > today["MA5"] and close_p > today["MA10"] and close_p > today["MA20"] and close_p > today["MA60"]):
                 continue
                 
-            # 中長期均線翻揚 (今日20MA > 昨日20MA 且 今日60MA >= 昨日60MA)
             if not (today["MA20"] > yest["MA20"] and today["MA60"] >= yest["MA60"]):
                 continue
                 
-            # 均線糾結發散 (選配)
             if use_ma_tangle:
-                mas = list((today["MA5"], today["MA10"], today["MA20"]))
+                mas = (today["MA5"], today["MA10"], today["MA20"])
                 tangle_pct = ((max(mas) - min(mas)) / min(mas)) * 100.0
                 if tangle_pct > max_tangle_pct:
                     continue
                     
-            # 突破關鍵頸線：今日收盤 > 近 N 日最高收盤價
             prev_max_close = df["Close"].iloc[-(breakout_days+1):-1].max()
             if not (close_p > prev_max_close):
                 continue
                 
-            # 溫和帶量攻擊：1.5倍 < 今日量/5日均量 < 4倍，且 今日量 > 20日均量 1.5倍
             prev_v5 = float(yest["Vol_MA5"])
             prev_v20 = float(yest["Vol_MA20"])
             if prev_v5 <= 0 or prev_v20 <= 0:
@@ -179,41 +231,43 @@ def run_screening(
             if not (vol_mult < v5_ratio < max_vol_mult and v20_ratio > 1.5):
                 continue
                 
-            # 針對通過技術面篩選的股票，查詢籌碼與當沖數據
-            code = ticker.replace(".TW", "").replace(".TWO", "")
-            inst_3d_net, margin_diff_lots, dt_shares = fetch_single_chip_data(code, start_date)
+            inst_3d_net, margin_diff_lots, dt_shares, cap_stock = fetch_single_chip_data(code, start_date)
             
-            dt_ratio = (dt_shares / vol_shares) * 100.0 if (vol_shares > 0 and dt_shares > 0) else 0.0
+            dt_ratio = (dt_shares / cand["vol_shares"]) * 100.0 if (cand["vol_shares"] > 0 and dt_shares > 0) else 0.0
             if dt_ratio >= 45.0:
                 continue
                 
-            margin_ok = margin_diff_lots < (vol_lots * 0.15)
-            if require_chip_bonus:
-                if inst_3d_net <= 0 or not margin_ok:
+            turnover_pct = 0.0
+            if cap_stock > 0:
+                total_shares = cap_stock / 10.0
+                turnover_pct = (cand["vol_shares"] / total_shares) * 100.0
+                if turnover_pct >= 10.0:
                     continue
                     
-            # 統一欄位名稱以配合 K 線圖繪製
-            df_chart = df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})
-            
-            final_results.append({
-                "代號": code,
-                "名稱": TW_UNIVERSE[ticker],
-                "收盤價": round(close_p, 2),
-                "漲跌幅(%)": round(change_pct, 2),
-                "成交張數": int(vol_lots),
-                "金額(億)": round(amount_yi, 2),
-                "5日量比": round(v5_ratio, 2),
-                "當沖比(%)": round(dt_ratio, 1),
-                "週轉率(%)": "-",
-                "3日法人(張)": inst_3d_net,
-                "融資增減(張)": margin_diff_lots,
-                "歷史資料": df_chart
-            })
-            time.sleep(0.1)
-        except Exception:
-            continue
-            
-    res_df = pd.DataFrame(final_results)
-    if not res_df.empty:
-        res_df = res_df.sort_values(by="5日量比", ascending=False).reset_index(drop=True)
-    return res_df
+            margin_ok = margin_diff_lots < (cand["vol_lots"] * 0.15)
+請謹慎使用程式碼。
+if require_chip_bonus:
+if inst_3d_net <= 0 or not margin_ok:
+continue
+df_chart = df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})
+final_results.append({
+"代號": code,
+"名稱": cand["name"],
+"收盤價": round(cand["close"], 2),
+"漲跌幅(%)": round(cand["change_pct"], 2),
+"成交張數": cand["vol_lots"],
+"金額(億)": cand["amount_yi"],
+"5日量比": round(v5_ratio, 2),
+"當沖比(%)": round(dt_ratio, 1),
+"週轉率(%)": round(turnover_pct, 2),
+"3日法人(張)": inst_3d_net,
+"融資增減(張)": margin_diff_lots,
+"歷史資料": df_chart
+})
+time.sleep(0.1)
+except Exception:
+continue
+res_df = pd.DataFrame(final_results)
+if not res_df.empty:
+res_df = res_df.sort_values(by="3日法人(張)", ascending=False).reset_index(drop=True)
+return res_df
