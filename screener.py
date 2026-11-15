@@ -10,63 +10,68 @@ def get_latest_trading_date():
         dt -= timedelta(days=1)
     while dt.weekday() >= 5:
         dt -= timedelta(days=1)
-    return dt.strftime("%Y%m%d"), dt.strftime("%Y-%m-%d")
+    return dt.strftime("%Y-%m-%d")
 
-def fetch_twse_daily_all(date_str):
-    url = f"https://twse.com.tw{date_str}&type=ALLBUT0999"
-    res = requests.get(url, timeout=15).json()
-    if res.get("stat") != "OK":
-        return pd.DataFrame()
-    
-    target_table = None
-    for table in res.get("tables", []):
-        if "證券代號" in table.get("fields", []) and "收盤價" in table.get("fields", []):
-            target_table = table
-            break
-    if not target_table:
-        return pd.DataFrame()
-        
-    df = pd.DataFrame(target_table["data"], columns=target_table["fields"])
-    df = df[df["證券代號"].str.len() == 4].copy()
-    return df
+def fetch_finmind_market_daily(target_date):
+    """透過 FinMind 取得台股全市場（上市+上櫃）單日行情"""
+    url = "https://finmindtrade.com"
+    params = {
+        "dataset": "TaiwanStockPrice",
+        "start_date": target_date,
+        "end_date": target_date
+    }
+    res = requests.get(url, params=params, timeout=20).json()
+    return pd.DataFrame(res.get("data", []))
 
-def fetch_day_trade_ratio(date_str):
-    url = f"https://twse.com.tw{date_str}"
+def fetch_finmind_day_trade(target_date):
+    """透過 FinMind 取得台股全市場當日沖銷數據"""
+    url = "https://finmindtrade.com"
+    params = {
+        "dataset": "TaiwanStockDayTrading",
+        "start_date": target_date,
+        "end_date": target_date
+    }
     try:
-        res = requests.get(url, timeout=15).json()
-        if res.get("stat") != "OK":
+        res = requests.get(url, params=params, timeout=20).json()
+        df = pd.DataFrame(res.get("data", []))
+        if df.empty:
             return {}
-        df = pd.DataFrame(res["data"], columns=res["fields"])
-        dt_dict = {}
-        for _, r in df.iterrows():
-            code = str(r["證券代號"]).strip()
-            vol_str = str(r["當日沖銷交易成交股數"]).replace(",", "")
-            if vol_str.isdigit():
-                dt_dict[code] = int(vol_str)
-        return dt_dict
+        return dict(zip(df["stock_id"], df["Volume"]))
     except Exception:
         return {}
 
-def fetch_finmind_chip_and_hist(stock_id, start_date):
+def fetch_stock_names():
+    """取得台股上市櫃代號與中文名稱對照表"""
+    url = "https://finmindtrade.com"
+    params = {"dataset": "TaiwanStockInfo"}
+    try:
+        res = requests.get(url, params=params, timeout=20).json()
+        df = pd.DataFrame(res.get("data", []))
+        if df.empty:
+            return {}, {}
+        df = df.drop_duplicates(subset=["stock_id"])
+        name_map = dict(zip(df["stock_id"], df["stock_name"]))
+        cap_map = {}
+        if "capital_stock" in df.columns:
+            cap_map = dict(zip(df["stock_id"], df["capital_stock"]))
+        return name_map, cap_map
+    except Exception:
+        return {}, {}
+
+def fetch_single_stock_detail(stock_id, start_date):
+    """針對通過初篩的候選股，取得近 4 個月日K、三大法人、融資券"""
     base_url = "https://finmindtrade.com"
     
-    p_price = {"dataset": "TaiwanStockPrice", "data_id": stock_id, "start_date": start_date}
-    r_price = requests.get(base_url, params=p_price, timeout=10).json()
-    df_p = pd.DataFrame(r_price.get("data", []))
+    r_p = requests.get(base_url, params={"dataset": "TaiwanStockPrice", "data_id": stock_id, "start_date": start_date}, timeout=12).json()
+    df_p = pd.DataFrame(r_p.get("data", []))
     
-    p_inst = {"dataset": "TaiwanStockInstitutionalInvestorsBuySell", "data_id": stock_id, "start_date": start_date}
-    r_inst = requests.get(base_url, params=p_inst, timeout=10).json()
-    df_i = pd.DataFrame(r_inst.get("data", []))
+    r_i = requests.get(base_url, params={"dataset": "TaiwanStockInstitutionalInvestorsBuySell", "data_id": stock_id, "start_date": start_date}, timeout=12).json()
+    df_i = pd.DataFrame(r_i.get("data", []))
     
-    p_margin = {"dataset": "TaiwanStockMarginPurchaseShortSale", "data_id": stock_id, "start_date": start_date}
-    r_margin = requests.get(base_url, params=p_margin, timeout=10).json()
-    df_m = pd.DataFrame(r_margin.get("data", []))
+    r_m = requests.get(base_url, params={"dataset": "TaiwanStockMarginPurchaseShortSale", "data_id": stock_id, "start_date": start_date}, timeout=12).json()
+    df_m = pd.DataFrame(r_m.get("data", []))
     
-    p_info = {"dataset": "TaiwanStockInfo", "data_id": stock_id}
-    r_info = requests.get(base_url, params=p_info, timeout=10).json()
-    df_info = pd.DataFrame(r_info.get("data", []))
-    
-    return df_p, df_i, df_m, df_info
+    return df_p, df_i, df_m
 
 def run_screening(
     vol_mult=1.5,
@@ -78,86 +83,99 @@ def run_screening(
     max_tangle_pct=5.0,
     require_chip_bonus=True
 ):
-    date_str, dash_date = get_latest_trading_date()
+    dash_date = get_latest_trading_date()
+    daily_df = fetch_finmind_market_daily(dash_date)
     
-    daily_df = fetch_twse_daily_all(date_str)
-    if daily_df.empty:
-        prev_dt = datetime.strptime(date_str, "%Y%m%d") - timedelta(days=1)
+    # 若遇國定假日或尚未開盤，自動往回尋找最近一個有資料的交易日 (最多回推 7 天)
+    for _ in range(7):
+        if not daily_df.empty:
+            break
+        prev_dt = datetime.strptime(dash_date, "%Y-%m-%d") - timedelta(days=1)
         while prev_dt.weekday() >= 5:
             prev_dt -= timedelta(days=1)
-        date_str = prev_dt.strftime("%Y%m%d")
         dash_date = prev_dt.strftime("%Y-%m-%d")
-        daily_df = fetch_twse_daily_all(date_str)
+        daily_df = fetch_finmind_market_daily(dash_date)
         
-    start_date = (datetime.strptime(dash_date, "%Y-%m-%d") - timedelta(days=110)).strftime("%Y-%m-%d")
-    dt_vol_map = fetch_day_trade_ratio(date_str)
+    if daily_df.empty:
+        return pd.DataFrame()
+        
+    start_date = (datetime.strptime(dash_date, "%Y-%m-%d") - timedelta(days=115)).strftime("%Y-%m-%d")
+    dt_vol_map = fetch_finmind_day_trade(dash_date)
+    name_map, cap_map = fetch_stock_names()
+    
+    # 第一階段：全市場初篩（過濾普通股 4 碼代號、流動性、漲幅 3.5%~8.5%、拒收長上影線、當沖比 < 45%）
+    daily_df = daily_df[daily_df["stock_id"].str.len() == 4].copy()
     candidates = []
     
     for _, row in daily_df.iterrows():
         try:
-            code = str(row["證券代號"]).strip()
-            name = str(row["證券名稱"]).strip()
+            code = str(row["stock_id"]).strip()
+            open_p = float(row["open"])
+            high_p = float(row["max"])
+            low_p = float(row["min"])
+            close_p = float(row["close"])
+            vol_shares = float(row["Trading_Volume"])
+            amount = float(row["Trading_money"])
+            spread = float(row["spread"])
             
-            def to_f(val):
-                s = str(val).replace(",", "").strip()
-                return float(s) if s not in ["", "--", "X"] else np.nan
-                
-            open_p = to_f(row["開盤價"])
-            high_p = to_f(row["最高價"])
-            low_p = to_f(row["最低價"])
-            close_p = to_f(row["收盤價"])
-            vol_shares = to_f(row["成交股數"])
-            amount = to_f(row["成交金額"])
-            diff_sign = str(row["漲跌(+/-)"]).strip()
-            diff_val = to_f(row["漲跌價差"])
-            
-            if np.isnan([open_p, high_p, low_p, close_p, vol_shares, amount]).any():
-                continue
-                
+            # 流動性門檻：成交張數 > 1500 張 且 成交金額 > 1 億元
             vol_lots = vol_shares / 1000.0
             amount_yi = amount / 100000000.0
             if vol_lots < min_vol_lots or amount_yi < min_amount_yi:
                 continue
                 
-            signed_diff = diff_val if "+" in diff_sign else (-diff_val if "-" in diff_sign else 0.0)
-            prev_close = close_p - signed_diff
+            prev_close = close_p - spread
             if prev_close <= 0:
                 continue
-            change_pct = (signed_diff / prev_close) * 100.0
+            change_pct = (spread / prev_close) * 100.0
             
+            # 二、溫和強勢紅K：漲幅介於 3.5% ~ 8.5%（嚴格排除 >= 9.5% 漲停）
             if not (3.5 <= change_pct <= 8.5):
                 continue
             if close_p <= open_p:
                 continue
                 
+            # 二、拒收長上影線：收盤距最高 < 1.5% 且 上影線 < 實體紅K的 1/3
             dist_to_high_pct = ((high_p - close_p) / close_p) * 100.0
             upper_shadow = high_p - close_p
             body_len = close_p - open_p
             if dist_to_high_pct >= 1.5 or upper_shadow >= (body_len / 3.0):
                 continue
                 
-            dt_shares = dt_vol_map.get(code, 0)
+            # 三、當沖比率 < 45%
+            dt_shares = float(dt_vol_map.get(code, 0))
             dt_ratio = (dt_shares / vol_shares) * 100.0 if vol_shares > 0 else 0.0
             if dt_ratio >= 45.0:
                 continue
                 
+            # 三、週轉率 < 10%
+            turnover_pct = 0.0
+            cap = float(cap_map.get(code, 0))
+            if cap > 0:
+                total_shares = cap / 10.0
+                turnover_pct = (vol_shares / total_shares) * 100.0
+                if turnover_pct >= 10.0:
+                    continue
+                    
             candidates.append({
                 "code": code,
-                "name": name,
+                "name": name_map.get(code, code),
                 "close": close_p,
                 "change_pct": change_pct,
                 "vol_lots": int(vol_lots),
                 "amount_yi": round(amount_yi, 2),
-                "dt_ratio": round(dt_ratio, 1)
+                "dt_ratio": round(dt_ratio, 1),
+                "turnover_pct": round(turnover_pct, 2)
             })
         except Exception:
             continue
 
+    # 第二階段：精準驗證均線翻揚、突破頸線、5日/20日量比、法人與融資結構
     final_results = []
     for cand in candidates:
         code = cand["code"]
         try:
-            df_p, df_i, df_m, df_info = fetch_finmind_chip_and_hist(code, start_date)
+            df_p, df_i, df_m = fetch_single_stock_detail(code, start_date)
             if len(df_p) < 62:
                 continue
                 
@@ -172,23 +190,28 @@ def run_screening(
             today = df_p.iloc[-1]
             yest = df_p.iloc[-2]
             
+            # 一、站上所有均線 (收盤 > 5, 10, 20, 60MA)
             c = today["close"]
             if not (c > today["MA5"] and c > today["MA10"] and c > today["MA20"] and c > today["MA60"]):
                 continue
                 
+            # 一、中長期均線翻揚 (今日20MA > 昨日20MA 且 今日60MA >= 昨日60MA)
             if not (today["MA20"] > yest["MA20"] and today["MA60"] >= yest["MA60"]):
                 continue
                 
+            # 一、均線糾結發散 (選配)
             if use_ma_tangle:
                 mas = [today["MA5"], today["MA10"], today["MA20"]]
                 tangle_pct = ((max(mas) - min(mas)) / min(mas)) * 100.0
                 if tangle_pct > max_tangle_pct:
                     continue
                     
+            # 二、突破關鍵頸線：今日收盤 > 近 N 日最高收盤價
             prev_max_close = df_p["close"].iloc[-(breakout_days+1):-1].max()
             if not (c > prev_max_close):
                 continue
                 
+            # 三、溫和帶量攻擊：1.5倍 < 今日量/5日均量 < 4倍，且 今日量 > 20日均量 1.5倍
             prev_v5 = yest["Vol_MA5"]
             prev_v20 = yest["Vol_MA20"]
             if prev_v5 <= 0 or prev_v20 <= 0:
@@ -198,15 +221,7 @@ def run_screening(
             if not (vol_mult < v5_ratio < max_vol_mult and v20_ratio > 1.5):
                 continue
                 
-            turnover_pct = 0.0
-            if not df_info.empty and "capital_stock" in df_info.columns:
-                cap = float(df_info.iloc["capital_stock"])
-                total_shares = cap / 10.0
-                if total_shares > 0:
-                    turnover_pct = (today["Trading_Volume"] / total_shares) * 100.0
-                    if turnover_pct >= 10.0:
-                        continue
-                        
+            # 三、法人與資券結構
             inst_3d_net = 0
             if not df_i.empty:
                 df_i_recent = df_i[df_i["date"].isin(df_p["date"].tail(3))]
@@ -238,16 +253,10 @@ def run_screening(
                 "金額(億)": cand["amount_yi"],
                 "5日量比": round(v5_ratio, 2),
                 "當沖比(%)": cand["dt_ratio"],
-                "週轉率(%)": round(turnover_pct, 2),
+                "週轉率(%)": cand["turnover_pct"],
                 "3日法人(張)": inst_3d_net,
                 "融資增減(張)": margin_diff_lots,
                 "歷史資料": df_p
             })
-            time.sleep(0.2)
+            time.sleep(0.15)
         except Exception:
-            continue
-            
-    res_df = pd.DataFrame(final_results)
-    if not res_df.empty:
-        res_df = res_df.sort_values(by="3日法人(張)", ascending=False).reset_index(drop=True)
-    return res_df
