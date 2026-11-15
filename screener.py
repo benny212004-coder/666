@@ -3,26 +3,30 @@ import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import time, urllib3
+import time, urllib3, io
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_all_tw_universe():
-    """取得台股上市櫃全部普通股代號、中文名稱與市場別 (.TW / .TWO)"""
-    url, h = "https://finmindtrade.com", {"User-Agent": "Mozilla/5.0"}
-    uni = list()
-    try:
-        r = requests.get(url, params={"dataset": "TaiwanStockInfo"}, headers=h, timeout=12)
-        if r.status_code == 200 and r.json().get("data"):
-            df = pd.DataFrame(r.json().get("data")).drop_duplicates(subset=["stock_id"])
-            for _, row in df.iterrows():
-                c = str(row.get("stock_id", "")).strip()
-                t = str(row.get("type", "")).strip()
-                if len(c) == 4 and c.isdigit() and t in ("twse", "tpex"):
-                    suffix = ".TW" if t == "twse" else ".TWO"
-                    uni.append({"code": c, "ticker": f"{c}{suffix}", "name": str(row.get("stock_name", c)).strip()})
-    except Exception:
-        pass
+    """一年365天全天候從證交所官方清單取得台股上市櫃全部普通股代號與中文名稱"""
+    uni, h = list(), {"User-Agent": "Mozilla/5.0"}
+    urls = (("https://twse.com.tw", ".TW"), ("https://twse.com.tw", ".TWO"))
+    for url, suffix in urls:
+        try:
+            r = requests.get(url, headers=h, timeout=15, verify=False)
+            r.encoding = "big5"
+            dfs = pd.read_html(io.StringIO(r.text))
+            if dfs:
+                df = dfs[0]
+                for val in df[0].dropna():
+                    s = str(val).strip()
+                    parts = s.split()
+                    if len(parts) >= 2 and len(parts[0]) == 4 and parts[0].isdigit():
+                        c, name = parts[0], parts[1]
+                        if not c.startswith("00"):
+                            uni.append({"code": c, "ticker": f"{c}{suffix}", "name": name})
+        except Exception:
+            pass
     return uni
 
 def fetch_all_tw_stocks_today():
@@ -59,13 +63,6 @@ def fetch_chip(stock_id, start_date):
         if r.status_code == 200 and r.json().get("data"):
             dt_sh = float(pd.DataFrame(r.json().get("data")).iloc[-1]["Volume"])
     except Exception: pass
-    try:
-        r = requests.get(url, params={"dataset": "TaiwanStockInfo", "data_id": stock_id}, headers=h, timeout=5)
-        if r.status_code == 200 and r.json().get("data"):
-            d = r.json().get("data")
-            row0 = next(iter(d)) if isinstance(d, list) else d
-            if isinstance(row0, dict) and "capital_stock" in row0: cap = float(row0["capital_stock"])
-    except Exception: pass
     return inst, m_diff, dt_sh, cap
 
 def run_screening(cfg):
@@ -95,9 +92,8 @@ def run_screening(cfg):
     if not cands: return pd.DataFrame(), stats
     if not is_backup and len(cands) > 150: cands = sorted(cands, key=lambda x: x["ay"], reverse=True)[:150]
     
-    # 針對全市場分批下載近 5 個月資料，避免記憶體超載
     sdt, res, k_pass = (datetime.now() - timedelta(days=20)).strftime("%Y-%m-%d"), list(), 0
-    chunk_size = 250
+    chunk_size = 300
     for i in range(0, len(cands), chunk_size):
         chunk = cands[i:i + chunk_size]
         tks = [c.get("ticker") for c in chunk]
@@ -110,7 +106,7 @@ def run_screening(cfg):
                 df = df.dropna(subset=["Close", "Volume"])
                 if len(df) < 62: continue
                 td, yt = df.iloc[-1], df.iloc[-2]
-                op, hi, lo, cl, vs, pc = float(td["Open"]), float(td["High"]), float(td["Low"]), float(td["Close"]), float(td["Volume"]), float(yt["Close"])
+                op, hi, lo, cl, vs, pc = float(td["Open"]), float(td["High"]), float(td["Close"]), float(td["Volume"]), float(yt["Close"])
                 if cd.get("bk"):
                     if pc <= 0: continue
                     chg, vl, ay = ((cl - pc) / pc) * 100.0, vs / 1000.0, (cl * vs) / 100000000.0
@@ -132,10 +128,9 @@ def run_screening(cfg):
                 if cfg["use_vol"] and not (cfg["min_v5"] < v5_r < cfg["max_v5"] and v20_r > 1.5): continue
                 inst, md, dt_sh, cap = fetch_chip(code, sdt) if (cfg["use_liq"] or cfg["use_chip"]) else (0, 0, 0.0, 0.0)
                 dt_r = (dt_sh / cd.get("vs")) * 100.0 if (cd.get("vs") > 0 and dt_sh > 0) else 0.0
-                to_p = (cd.get("vs") / (cap / 10.0)) * 100.0 if cap > 0 else 0.0
-                if cfg["use_liq"] and (dt_r >= 45.0 or to_p >= 10.0): continue
+                if cfg["use_liq"] and dt_r >= 45.0: continue
                 if cfg["use_chip"] and (inst <= 0 or md >= cd.get("vl") * 0.15): continue
-                res.append({"代號": code, "名稱": cd.get("name"), "收盤價": round(cd.get("close"), 2), "漲跌幅(%)": round(cd.get("chg"), 2), "成交張數": cd.get("vl"), "金額(億)": cd.get("ay"), "5日量比": round(v5_r, 2), "當沖比(%)": round(dt_r, 1), "週轉率(%)": round(to_p, 2), "3日法人(張)": inst, "融資增減(張)": md, "歷史資料": df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})})
+                res.append({"代號": code, "名稱": cd.get("name"), "收盤價": round(cd.get("close"), 2), "漲跌幅(%)": round(cd.get("chg"), 2), "成交張數": cd.get("vl"), "金額(億)": cd.get("ay"), "5日量比": round(v5_r, 2), "當沖比(%)": round(dt_r, 1), "週轉率(%)": "-", "3日法人(張)": inst, "融資增減(張)": md, "歷史資料": df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})})
                 time.sleep(0.05)
             except Exception: continue
     stats["stage1"] = k_pass
