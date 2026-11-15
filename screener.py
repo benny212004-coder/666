@@ -15,7 +15,14 @@ BACKUP_UNIVERSE = (
     "1504.TW", "2002.TW", "1605.TW", "2353.TW", "2324.TW", "4938.TW", "2301.TW", "2356.TW",
     "2409.TW", "3481.TW", "2344.TW", "2408.TW", "8299.TWO", "3260.TWO", "6239.TW", "2449.TW",
     "3037.TW", "3189.TW", "8046.TW", "2313.TW", "2368.TW", "6274.TWO", "2383.TW", "3044.TW",
-    "5483.TWO", "6488.TWO", "3105.TWO", "8069.TWO", "5347.TWO", "3293.TWO", "6510.TWO", "5274.TWO"
+    "5483.TWO", "6488.TWO", "3105.TWO", "8069.TWO", "5347.TWO", "3293.TWO", "6510.TWO", "5274.TWO",
+    "2474.TW", "2354.TW", "3005.TW", "3706.TW", "2377.TW", "2421.TW", "3653.TW", "6285.TW",
+    "5388.TW", "3596.TW", "4968.TW", "2458.TW", "3035.TW", "6531.TW", "2337.TW", "3006.TW",
+    "4919.TW", "6770.TW", "5340.TWO", "1815.TWO", "8358.TWO", "6182.TWO", "3532.TW", "3707.TWO",
+    "3016.TWO", "2360.TW", "6196.TW", "3413.TW", "3583.TW", "3131.TWO", "6640.TWO", "5443.TWO",
+    "2464.TW", "2049.TW", "1590.TW", "4576.TW", "2201.TW", "2204.TW", "1319.TW", "1522.TW",
+    "2634.TW", "8033.TW", "2630.TW", "5284.TW", "6446.TW", "6472.TW", "1795.TW", "4743.TWO",
+    "9958.TW", "3708.TW", "6806.TW", "1609.TW", "1608.TW", "2501.TW", "2542.TW", "5522.TW"
 )
 
 def fetch_all_tw_stocks_today():
@@ -92,12 +99,13 @@ def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots
             c = tk.split(".").pop(0)
             cands.append({"code": c, "ticker": tk, "name": c, "close": 0.0, "chg": 0.0, "vl": 0, "vs": 0.0, "ay": 0.0, "bk": True})
 
-    stats["stage1"] = len(cands)
-    if not cands: return pd.DataFrame(), stats
+    if not cands:
+        return pd.DataFrame(), stats
     tks = [c.get("ticker") for c in cands]
     hist = yf.download(tks, period="5mo", group_by="ticker", progress=False, threads=True)
     sdt = (datetime.now() - timedelta(days=20)).strftime("%Y-%m-%d")
     res = list()
+    kline_pass_count = 0
     for cd in cands:
         tk, code = cd.get("ticker"), cd.get("code")
         try:
@@ -107,13 +115,14 @@ def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots
             for m in (5, 10, 20, 60): df[f"MA{m}"] = df["Close"].rolling(m).mean()
             df["V5"], df["V20"] = df["Volume"].rolling(5).mean(), df["Volume"].rolling(20).mean()
             td, yt = df.iloc[-1], df.iloc[-2]
-            op, hi, cl, vs, pc = float(td["Open"]), float(td["High"]), float(td["Close"]), float(td["Volume"]), float(yt["Close"])
+            op, hi, lo, cl, vs, pc = float(td["Open"]), float(td["High"]), float(td["Close"]), float(td["Volume"]), float(yt["Close"])
             if cd.get("bk"):
                 if pc <= 0: continue
                 chg, vl, ay = ((cl - pc) / pc) * 100.0, vs / 1000.0, (cl * vs) / 100000000.0
                 if vl < min_vol_lots or ay < min_amount_yi or not (min_chg <= chg <= max_chg) or cl < op or (cl == op and cl < hi): continue
                 if ((hi - cl) / cl) * 100.0 >= 1.5 or (cl > op and (hi - cl) >= ((cl - op) / 3.0)): continue
                 cd["close"], cd["chg"], cd["vl"], cd["vs"], cd["ay"] = cl, chg, int(vl), vs, round(ay, 2)
+            kline_pass_count += 1
             if not (cl > td["MA5"] and cl > td["MA10"] and cl > td["MA20"] and cl > td["MA60"]): continue
             if not (td["MA20"] > yt["MA20"] and td["MA60"] >= yt["MA60"]): continue
             if use_ma_tangle:
@@ -130,5 +139,6 @@ def run_screening(vol_mult=1.5, max_vol_mult=4.0, breakout_days=20, min_vol_lots
             res.append({"代號": code, "名稱": cd.get("name"), "收盤價": round(cd.get("close"), 2), "漲跌幅(%)": round(cd.get("chg"), 2), "成交張數": cd.get("vl"), "金額(億)": cd.get("ay"), "5日量比": round(vs / pv5, 2), "當沖比(%)": round(dt_r, 1), "週轉率(%)": round(to_p, 2), "3日法人(張)": inst, "融資增減(張)": md, "歷史資料": df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})})
             time.sleep(0.1)
         except Exception: continue
+    stats["stage1"] = kline_pass_count
     out = pd.DataFrame(res)
     return (out.sort_values(by="3日法人(張)", ascending=False).reset_index(drop=True) if not out.empty else out), stats
