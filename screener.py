@@ -247,6 +247,7 @@ def run_screening(
                 turnover_pct = (cand["vol_shares"] / total_shares) * 100.0
                 if turnover_pct >= 10.0:
                     continue
+                    
                     margin_ok = margin_diff_lots < (cand["vol_lots"] * 0.15)
 if require_chip_bonus:
 if inst_3d_net <= 0 or not margin_ok:
