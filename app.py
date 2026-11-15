@@ -11,7 +11,7 @@ with st.sidebar:
     st.header("⚙️ 專屬濾網參數微調")
     
     st.subheader("1. 均線與頸線突破")
-    breakout_days = st.selectbox("突破關鍵頸線天數", options=, index=0)
+    breakout_days = st.selectbox("突破關鍵頸線天數", options=[20, 60], index=0)
     use_ma_tangle = st.checkbox("啟用均線糾結發散 (選配)", value=False)
     max_tangle_pct = st.slider("5/10/20日線最大乖離 (%)", min_value=2.0, max_value=8.0, value=5.0, step=0.5)
     
@@ -55,8 +55,8 @@ if 'scan_result' in st.session_state:
             "選擇要查看線圖的股票：",
             options=df_res["代號"] + " " + df_res["名稱"]
         )
-        stock_code = selected_stock.split(" ")
-        row = df_res[df_res["代號"] == stock_code].iloc
+        stock_code = selected_stock.split(" ")[0]
+        row = df_res[df_res["代號"] == stock_code].iloc[0]
         hist = row["歷史資料"].tail(60)
         
         fig = go.Figure()
