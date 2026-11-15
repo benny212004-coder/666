@@ -15,14 +15,7 @@ BACKUP_UNIVERSE = (
     "1504.TW", "2002.TW", "1605.TW", "2353.TW", "2324.TW", "4938.TW", "2301.TW", "2356.TW",
     "2409.TW", "3481.TW", "2344.TW", "2408.TW", "8299.TWO", "3260.TWO", "6239.TW", "2449.TW",
     "3037.TW", "3189.TW", "8046.TW", "2313.TW", "2368.TW", "6274.TWO", "2383.TW", "3044.TW",
-    "5483.TWO", "6488.TWO", "3105.TWO", "8069.TWO", "5347.TWO", "3293.TWO", "6510.TWO", "5274.TWO",
-    "2474.TW", "2354.TW", "3005.TW", "3706.TW", "2377.TW", "2421.TW", "3653.TW", "6285.TW",
-    "5388.TW", "3596.TW", "4968.TW", "2458.TW", "3035.TW", "6531.TW", "2337.TW", "3006.TW",
-    "4919.TW", "6770.TW", "5340.TWO", "1815.TWO", "8358.TWO", "6182.TWO", "3532.TW", "3707.TWO",
-    "3016.TWO", "2360.TW", "6196.TW", "3413.TW", "3583.TW", "3131.TWO", "6640.TWO", "5443.TWO",
-    "2464.TW", "2049.TW", "1590.TW", "4576.TW", "2201.TW", "2204.TW", "1319.TW", "1522.TW",
-    "2634.TW", "8033.TW", "2630.TW", "5284.TW", "6446.TW", "6472.TW", "1795.TW", "4743.TWO",
-    "9958.TW", "3708.TW", "6806.TW", "1609.TW", "1608.TW", "2501.TW", "2542.TW", "5522.TW"
+    "5483.TWO", "6488.TWO", "3105.TWO", "8069.TWO", "5347.TWO", "3293.TWO", "6510.TWO", "5274.TWO"
 )
 
 def fetch_all_tw_stocks_today():
@@ -43,25 +36,25 @@ def fetch_chip(stock_id, start_date):
     url, h = "https://finmindtrade.com", {"User-Agent": "Mozilla/5.0"}
     inst, m_diff, dt_sh, cap = 0, 0, 0.0, 0.0
     try:
-        r = requests.get(url, params={"dataset": "TaiwanStockInstitutionalInvestorsBuySell", "data_id": stock_id, "start_date": start_date}, headers=h, timeout=6)
+        r = requests.get(url, params={"dataset": "TaiwanStockInstitutionalInvestorsBuySell", "data_id": stock_id, "start_date": start_date}, headers=h, timeout=5)
         if r.status_code == 200 and r.json().get("data"):
             df = pd.DataFrame(r.json().get("data"))
             df_r = df[df["date"].isin(sorted(df["date"].unique())[-3:])]
             inst = int((df_r["buy"].sum() - df_r["sell"].sum()) / 1000)
     except Exception: pass
     try:
-        r = requests.get(url, params={"dataset": "TaiwanStockMarginPurchaseShortSale", "data_id": stock_id, "start_date": start_date}, headers=h, timeout=6)
+        r = requests.get(url, params={"dataset": "TaiwanStockMarginPurchaseShortSale", "data_id": stock_id, "start_date": start_date}, headers=h, timeout=5)
         if r.status_code == 200 and r.json().get("data") and len(r.json().get("data")) >= 2:
             df = pd.DataFrame(r.json().get("data")).sort_values("date").reset_index(drop=True)
             m_diff = int(df.iloc[-1]["MarginPurchaseTodayBalance"] - df.iloc[-2]["MarginPurchaseTodayBalance"])
     except Exception: pass
     try:
-        r = requests.get(url, params={"dataset": "TaiwanStockDayTrading", "data_id": stock_id, "start_date": start_date}, headers=h, timeout=6)
+        r = requests.get(url, params={"dataset": "TaiwanStockDayTrading", "data_id": stock_id, "start_date": start_date}, headers=h, timeout=5)
         if r.status_code == 200 and r.json().get("data"):
             dt_sh = float(pd.DataFrame(r.json().get("data")).iloc[-1]["Volume"])
     except Exception: pass
     try:
-        r = requests.get(url, params={"dataset": "TaiwanStockInfo", "data_id": stock_id}, headers=h, timeout=6)
+        r = requests.get(url, params={"dataset": "TaiwanStockInfo", "data_id": stock_id}, headers=h, timeout=5)
         if r.status_code == 200 and r.json().get("data"):
             d = r.json().get("data")
             row0 = next(iter(d)) if isinstance(d, list) else d
@@ -103,9 +96,11 @@ def run_screening(cfg):
     for cd in cands:
         tk, code = cd.get("ticker"), cd.get("code")
         try:
-            df = hist[tk].dropna() if len(tks) > 1 else hist.dropna()
+            df = hist[tk].copy() if isinstance(hist.columns, pd.MultiIndex) else hist.copy()
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close", "Volume"])
             if len(df) < 62: continue
-            df = df.copy()
             for m in (5, 10, 20, 60): df[f"MA{m}"] = df["Close"].rolling(m).mean()
             df["V5"], df["V20"] = df["Volume"].rolling(5).mean(), df["Volume"].rolling(20).mean()
             td, yt = df.iloc[-1], df.iloc[-2]
@@ -128,13 +123,16 @@ def run_screening(cfg):
             if pv5 <= 0 or pv20 <= 0: continue
             v5_r, v20_r = vs / pv5, vs / pv20
             if cfg["use_vol"] and not (cfg["min_v5"] < v5_r < cfg["max_v5"] and v20_r > 1.5): continue
-            inst, md, dt_sh, cap = fetch_chip(code, sdt)
+            if cfg["use_liq"] or cfg["use_chip"]:
+                inst, md, dt_sh, cap = fetch_chip(code, sdt)
+            else:
+                inst, md, dt_sh, cap = 0, 0, 0.0, 0.0
             dt_r = (dt_sh / cd.get("vs")) * 100.0 if (cd.get("vs") > 0 and dt_sh > 0) else 0.0
             to_p = (cd.get("vs") / (cap / 10.0)) * 100.0 if cap > 0 else 0.0
             if cfg["use_liq"] and (dt_r >= 45.0 or to_p >= 10.0): continue
             if cfg["use_chip"] and (inst <= 0 or md >= cd.get("vl") * 0.15): continue
             res.append({"代號": code, "名稱": cd.get("name"), "收盤價": round(cd.get("close"), 2), "漲跌幅(%)": round(cd.get("chg"), 2), "成交張數": cd.get("vl"), "金額(億)": cd.get("ay"), "5日量比": round(v5_r, 2), "當沖比(%)": round(dt_r, 1), "週轉率(%)": round(to_p, 2), "3日法人(張)": inst, "融資增減(張)": md, "歷史資料": df.rename(columns={"Open": "open", "High": "max", "Low": "min", "Close": "close"})})
-            time.sleep(0.08)
+            time.sleep(0.05)
         except Exception: continue
     stats["stage1"] = k_pass
     out = pd.DataFrame(res)
